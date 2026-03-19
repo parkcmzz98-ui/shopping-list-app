@@ -32,17 +32,25 @@
       color: #fff;
     }
 
-    .header h1 {
-      font-size: 1.6rem;
-      font-weight: 700;
-      letter-spacing: -0.5px;
+    .header h1 { font-size: 1.6rem; font-weight: 700; letter-spacing: -0.5px; }
+
+    .header .meta {
+      margin-top: 6px;
+      font-size: 0.8rem;
+      opacity: 0.75;
+      display: flex;
+      align-items: center;
+      gap: 8px;
     }
 
-    .header .summary {
-      margin-top: 6px;
-      font-size: 0.85rem;
-      opacity: 0.85;
+    .db-badge {
+      background: rgba(255,255,255,0.2);
+      border-radius: 20px;
+      padding: 2px 10px;
+      font-size: 0.72rem;
     }
+
+    .header .summary { margin-top: 4px; font-size: 0.85rem; opacity: 0.85; }
 
     .input-area {
       display: flex;
@@ -60,9 +68,7 @@
       transition: border-color 0.2s;
     }
 
-    .input-area input:focus {
-      border-color: #667eea;
-    }
+    .input-area input:focus { border-color: #667eea; }
 
     .input-area button {
       padding: 12px 18px;
@@ -77,6 +83,7 @@
 
     .input-area button:hover { background: #5a6fd6; }
     .input-area button:active { transform: scale(0.95); }
+    .input-area button:disabled { background: #a5b4fc; cursor: not-allowed; }
 
     .filters {
       display: flex;
@@ -113,6 +120,28 @@
       font-size: 0.9rem;
     }
 
+    .loading {
+      text-align: center;
+      color: #94a3b8;
+      padding: 32px 0;
+      font-size: 0.9rem;
+    }
+
+    .loading::after {
+      content: '';
+      display: inline-block;
+      width: 16px;
+      height: 16px;
+      border: 2px solid #e2e8f0;
+      border-top-color: #667eea;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      margin-left: 8px;
+      vertical-align: middle;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
     .item {
       display: flex;
       align-items: center;
@@ -131,10 +160,7 @@
       to   { opacity: 1; transform: translateY(0); }
     }
 
-    .item.checked {
-      opacity: 0.55;
-      background: #f1f5f9;
-    }
+    .item.checked { opacity: 0.55; background: #f1f5f9; }
 
     .item input[type="checkbox"] {
       width: 20px;
@@ -151,10 +177,7 @@
       word-break: break-all;
     }
 
-    .item.checked .item-text {
-      text-decoration: line-through;
-      color: #94a3b8;
-    }
+    .item.checked .item-text { text-decoration: line-through; color: #94a3b8; }
 
     .del-btn {
       background: none;
@@ -168,10 +191,7 @@
       line-height: 1;
     }
 
-    .del-btn:hover {
-      color: #ef4444;
-      background: #fee2e2;
-    }
+    .del-btn:hover { color: #ef4444; background: #fee2e2; }
 
     .footer {
       display: flex;
@@ -181,10 +201,7 @@
       border-top: 1px solid #f1f5f9;
     }
 
-    .footer span {
-      font-size: 0.8rem;
-      color: #94a3b8;
-    }
+    .footer span { font-size: 0.8rem; color: #94a3b8; }
 
     .clear-btn {
       font-size: 0.8rem;
@@ -199,12 +216,26 @@
 
     .clear-btn:hover { background: #fee2e2; }
     .clear-btn:disabled { opacity: 0.3; cursor: default; background: none; }
+
+    .error-msg {
+      background: #fee2e2;
+      color: #dc2626;
+      font-size: 0.8rem;
+      padding: 8px 14px;
+      border-radius: 8px;
+      margin: 0 20px 12px;
+      display: none;
+    }
   </style>
 </head>
 <body>
   <div class="card">
     <div class="header">
       <h1>🛒 쇼핑 리스트</h1>
+      <div class="meta">
+        <span class="db-badge">☁️ Supabase</span>
+        <span id="syncStatus">동기화 중...</span>
+      </div>
       <p class="summary" id="summary">항목 0개 · 완료 0개</p>
     </div>
 
@@ -219,7 +250,11 @@
       <button data-filter="done">완료</button>
     </div>
 
-    <div class="list" id="list"></div>
+    <div class="error-msg" id="errorMsg"></div>
+
+    <div class="list" id="list">
+      <div class="loading">데이터 불러오는 중</div>
+    </div>
 
     <div class="footer">
       <span id="footerInfo"></span>
@@ -228,34 +263,164 @@
   </div>
 
   <script>
-    let items = JSON.parse(localStorage.getItem('shopping') || '[]');
+    // ── Supabase 설정 ──────────────────────────────────────────
+    const SUPABASE_URL  = 'https://ypwauisaltfehqtlvskl.supabase.co';
+    const SUPABASE_KEY  = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inlwd2F1aXNhbHRmZWhxdGx2c2tsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM5MjQwMjMsImV4cCI6MjA4OTUwMDAyM30.1BA8QYjmk9Z2YDN3zVzBAsUVTfshYsvXo_PlLAN8_04';
+    const TABLE         = 'shopping_items';
+    const API           = `${SUPABASE_URL}/rest/v1/${TABLE}`;
+    const HEADERS       = {
+      'apikey':        SUPABASE_KEY,
+      'Authorization': `Bearer ${SUPABASE_KEY}`,
+      'Content-Type':  'application/json',
+      'Prefer':        'return=representation'
+    };
+
+    // ── 상태 ──────────────────────────────────────────────────
+    let items  = [];
     let filter = 'all';
 
-    const input    = document.getElementById('itemInput');
-    const addBtn   = document.getElementById('addBtn');
-    const listEl   = document.getElementById('list');
-    const summary  = document.getElementById('summary');
+    // ── DOM ───────────────────────────────────────────────────
+    const input      = document.getElementById('itemInput');
+    const addBtn     = document.getElementById('addBtn');
+    const listEl     = document.getElementById('list');
+    const summary    = document.getElementById('summary');
     const footerInfo = document.getElementById('footerInfo');
     const clearDone  = document.getElementById('clearDone');
+    const syncStatus = document.getElementById('syncStatus');
+    const errorMsg   = document.getElementById('errorMsg');
     const filterBtns = document.querySelectorAll('.filters button');
 
-    function save() {
-      localStorage.setItem('shopping', JSON.stringify(items));
+    // ── Supabase API 헬퍼 ─────────────────────────────────────
+    async function dbFetch(url, options = {}) {
+      const res = await fetch(url, { headers: HEADERS, ...options });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.message || `HTTP ${res.status}`);
+      }
+      return res.status === 204 ? null : res.json();
     }
 
-    function render() {
-      const total   = items.length;
-      const done    = items.filter(i => i.checked).length;
-      const active  = total - done;
+    function showError(msg) {
+      errorMsg.textContent = '⚠️ ' + msg;
+      errorMsg.style.display = 'block';
+      setTimeout(() => { errorMsg.style.display = 'none'; }, 4000);
+    }
 
-      summary.textContent = `항목 ${total}개 · 완료 ${done}개`;
+    // ── DB CRUD ───────────────────────────────────────────────
+    async function loadItems() {
+      syncStatus.textContent = '동기화 중...';
+      try {
+        const data = await dbFetch(`${API}?order=created_at.desc`);
+        items = data;
+        syncStatus.textContent = '✓ 동기화됨';
+        render();
+      } catch (e) {
+        syncStatus.textContent = '⚠️ 오프라인';
+        showError('데이터를 불러오지 못했습니다: ' + e.message);
+        listEl.innerHTML = '<div class="empty">데이터를 불러오지 못했습니다.</div>';
+      }
+    }
+
+    async function addItem() {
+      const text = input.value.trim();
+      if (!text) { input.focus(); return; }
+
+      const newItem = {
+        id:      Date.now().toString(),
+        text,
+        checked: false
+      };
+
+      // 낙관적 업데이트
+      items.unshift(newItem);
+      input.value = '';
+      addBtn.disabled = true;
+      render();
+
+      try {
+        const [saved] = await dbFetch(API, {
+          method: 'POST',
+          body: JSON.stringify(newItem)
+        });
+        // 서버 응답으로 교체 (created_at 등 반영)
+        items = items.map(i => i.id === newItem.id ? saved : i);
+        render();
+      } catch (e) {
+        // 롤백
+        items = items.filter(i => i.id !== newItem.id);
+        render();
+        showError('추가 실패: ' + e.message);
+      } finally {
+        addBtn.disabled = false;
+        input.focus();
+      }
+    }
+
+    async function toggleItem(id) {
+      const item = items.find(i => i.id === id);
+      if (!item) return;
+
+      // 낙관적 업데이트
+      item.checked = !item.checked;
+      render();
+
+      try {
+        await dbFetch(`${API}?id=eq.${id}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ checked: item.checked })
+        });
+      } catch (e) {
+        // 롤백
+        item.checked = !item.checked;
+        render();
+        showError('업데이트 실패: ' + e.message);
+      }
+    }
+
+    async function removeItem(id) {
+      const prev = [...items];
+      items = items.filter(i => i.id !== id);
+      render();
+
+      try {
+        await dbFetch(`${API}?id=eq.${id}`, { method: 'DELETE' });
+      } catch (e) {
+        items = prev;
+        render();
+        showError('삭제 실패: ' + e.message);
+      }
+    }
+
+    async function clearChecked() {
+      const prev = [...items];
+      const toDelete = items.filter(i => i.checked).map(i => i.id);
+      if (!toDelete.length) return;
+
+      items = items.filter(i => !i.checked);
+      render();
+
+      try {
+        await dbFetch(`${API}?id=in.(${toDelete.join(',')})`, { method: 'DELETE' });
+      } catch (e) {
+        items = prev;
+        render();
+        showError('삭제 실패: ' + e.message);
+      }
+    }
+
+    // ── 렌더링 ────────────────────────────────────────────────
+    function render() {
+      const total  = items.length;
+      const done   = items.filter(i => i.checked).length;
+      const active = total - done;
+
+      summary.textContent    = `항목 ${total}개 · 완료 ${done}개`;
       footerInfo.textContent = `미완료 ${active}개`;
-      clearDone.disabled = done === 0;
+      clearDone.disabled     = done === 0;
 
       const visible = items.filter(i =>
         filter === 'all'    ? true :
-        filter === 'active' ? !i.checked :
-                               i.checked
+        filter === 'active' ? !i.checked : i.checked
       );
 
       if (visible.length === 0) {
@@ -269,43 +434,24 @@
 
       listEl.innerHTML = visible.map(item => `
         <div class="item ${item.checked ? 'checked' : ''}" data-id="${item.id}">
-          <input type="checkbox" ${item.checked ? 'checked' : ''} onchange="toggle('${item.id}')" />
+          <input type="checkbox" ${item.checked ? 'checked' : ''}
+                 onchange="toggleItem('${item.id}')" />
           <span class="item-text">${escapeHtml(item.text)}</span>
-          <button class="del-btn" onclick="remove('${item.id}')" title="삭제">✕</button>
+          <button class="del-btn" onclick="removeItem('${item.id}')" title="삭제">✕</button>
         </div>
       `).join('');
     }
 
     function escapeHtml(str) {
-      return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+      return str
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     }
 
-    function addItem() {
-      const text = input.value.trim();
-      if (!text) { input.focus(); return; }
-      items.unshift({ id: Date.now().toString(), text, checked: false });
-      input.value = '';
-      save(); render();
-      input.focus();
-    }
-
-    function toggle(id) {
-      const item = items.find(i => i.id === id);
-      if (item) { item.checked = !item.checked; save(); render(); }
-    }
-
-    function remove(id) {
-      items = items.filter(i => i.id !== id);
-      save(); render();
-    }
-
+    // ── 이벤트 ────────────────────────────────────────────────
     addBtn.addEventListener('click', addItem);
     input.addEventListener('keydown', e => { if (e.key === 'Enter') addItem(); });
-
-    clearDone.addEventListener('click', () => {
-      items = items.filter(i => !i.checked);
-      save(); render();
-    });
+    clearDone.addEventListener('click', clearChecked);
 
     filterBtns.forEach(btn => {
       btn.addEventListener('click', () => {
@@ -316,7 +462,8 @@
       });
     });
 
-    render();
+    // ── 초기 로드 ─────────────────────────────────────────────
+    loadItems();
   </script>
 </body>
 </html>
